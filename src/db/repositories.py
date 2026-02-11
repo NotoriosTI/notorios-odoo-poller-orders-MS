@@ -337,3 +337,35 @@ class SentOrderRepository:
         )
         rows = await cursor.fetchall()
         return {(r["odoo_order_id"], r["odoo_write_date"]) for r in rows}
+
+    async def list_by_connection(
+        self, connection_id: int, limit: int = 30
+    ) -> list[SentOrder]:
+        cursor = await self._db.execute(
+            """SELECT * FROM sent_orders
+               WHERE connection_id = ?
+               ORDER BY sent_at DESC LIMIT ?""",
+            (connection_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [
+            SentOrder(
+                id=r["id"],
+                connection_id=r["connection_id"],
+                odoo_order_id=r["odoo_order_id"],
+                odoo_order_name=r["odoo_order_name"],
+                odoo_write_date=r["odoo_write_date"],
+                sent_at=r["sent_at"],
+            )
+            for r in rows
+        ]
+
+    async def trim_to_limit(self, connection_id: int, limit: int = 30) -> None:
+        await self._db.execute(
+            """DELETE FROM sent_orders WHERE connection_id = ? AND id NOT IN (
+                   SELECT id FROM sent_orders WHERE connection_id = ?
+                   ORDER BY sent_at DESC LIMIT ?
+               )""",
+            (connection_id, connection_id, limit),
+        )
+        await self._db.commit()

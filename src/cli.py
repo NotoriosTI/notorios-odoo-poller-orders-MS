@@ -22,7 +22,9 @@ from src.db.repositories import (
 )
 from src.encryption import FieldEncryptor
 from src.odoo.client import OdooClient
+from src.odoo.mapper import fetch_batch_data, map_order_to_webhook_payload
 from src.poller.scheduler import Scheduler
+from src.poller.sender import WebhookSender
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
     # reset-circuit
     p = sub.add_parser("reset-circuit", help="Resetear circuit breaker de una conexión")
     p.add_argument("id", type=int, help="ID de la conexión")
+
+    # send
+    p = sub.add_parser("send", help="Enviar webhooks manualmente de órdenes ya registradas")
+    p.add_argument("-c", "--connection", type=int, required=True, help="ID de la conexión")
+    p.add_argument("--last", type=int, default=0, help="Enviar las últimas N órdenes automáticamente")
 
     return parser
 
@@ -396,6 +403,103 @@ async def cmd_reset_circuit(ctx: AppContext, conn_id: int) -> None:
     print(f"Circuit breaker de '{conn.name}' reseteado a CLOSED.")
 
 
+async def cmd_send(ctx: AppContext, connection_id: int, last: int) -> None:
+    conn = await ctx.conn_repo.get(connection_id)
+    if not conn:
+        print(f"Conexión #{connection_id} no encontrada.")
+        return
+
+    sent_orders = await ctx.sent_repo.list_by_connection(connection_id)
+    if not sent_orders:
+        print(f"No hay órdenes registradas para la conexión '{conn.name}'.")
+        return
+
+    # Seleccionar órdenes
+    if last > 0:
+        selected = sent_orders[:last]
+    else:
+        print(f"\nÓrdenes registradas para '{conn.name}':\n")
+        headers = ["#", "Orden", "Odoo ID", "Write Date", "Registrada"]
+        rows = []
+        for i, so in enumerate(sent_orders):
+            rows.append([
+                str(i + 1),
+                so.odoo_order_name or str(so.odoo_order_id),
+                str(so.odoo_order_id),
+                so.odoo_write_date,
+                so.sent_at,
+            ])
+        _print_table(headers, rows)
+
+        print()
+        raw = input("Índices a enviar (separados por coma, ej: 1,3,5): ").strip()
+        if not raw:
+            print("Cancelado.")
+            return
+
+        try:
+            indices = [int(x.strip()) for x in raw.split(",")]
+        except ValueError:
+            print("Error: ingresa números separados por coma.")
+            return
+
+        selected = []
+        for idx in indices:
+            if 1 <= idx <= len(sent_orders):
+                selected.append(sent_orders[idx - 1])
+            else:
+                print(f"Índice {idx} fuera de rango, ignorado.")
+
+    if not selected:
+        print("No se seleccionaron órdenes.")
+        return
+
+    print(f"\nEnviando {len(selected)} orden(es) vía webhook...")
+
+    async with httpx.AsyncClient(timeout=30.0) as http:
+        client = OdooClient(
+            conn.odoo_url, conn.odoo_db, conn.odoo_username, conn.odoo_api_key,
+            http_client=http,
+        )
+        sender = WebhookSender(http)
+
+        await client.authenticate()
+
+        ok = 0
+        fail = 0
+        for so in selected:
+            try:
+                orders = await client.search_read(
+                    "sale.order",
+                    [["id", "=", so.odoo_order_id]],
+                    [
+                        "name", "state", "date_order", "write_date",
+                        "partner_id", "partner_shipping_id",
+                        "amount_untaxed", "amount_tax", "amount_total",
+                        "currency_id", "note",
+                    ],
+                )
+                if not orders:
+                    print(f"  {so.odoo_order_name}: orden no encontrada en Odoo, saltando.")
+                    fail += 1
+                    continue
+
+                batch = await fetch_batch_data(client, orders)
+                payload = map_order_to_webhook_payload(
+                    orders[0], batch, conn.odoo_db, conn.id
+                )
+                await sender.send(
+                    conn.webhook_url, payload, conn.webhook_secret, conn.id
+                )
+                print(f"  {so.odoo_order_name}: OK")
+                ok += 1
+            except Exception as e:
+                print(f"  {so.odoo_order_name}: ERROR - {e}")
+                fail += 1
+
+    print(f"\nResumen: {ok} enviadas, {fail} fallidas.")
+
+
 # ── Main dispatch ────────────────────────────────────────────
 
 async def run_cli(args: argparse.Namespace) -> None:
@@ -427,6 +531,8 @@ async def run_cli(args: argparse.Namespace) -> None:
                 await cmd_discard(ctx, args.id)
             case "reset-circuit":
                 await cmd_reset_circuit(ctx, args.id)
+            case "send":
+                await cmd_send(ctx, args.connection, args.last)
             case _:
                 build_parser().print_help()
     finally:

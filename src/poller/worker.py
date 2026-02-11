@@ -25,6 +25,8 @@ from src.poller.sender import WebhookSender, WebhookSendError
 
 logger = logging.getLogger(__name__)
 
+MAX_SENT_ORDERS = 30
+
 ORDER_FIELDS = [
     "name",
     "state",
@@ -86,10 +88,15 @@ class PollWorker:
             if self._odoo.uid is None:
                 await self._odoo.authenticate()
 
+            # ── Seed: primera sincronización ──
+            if not self._conn.last_sync_at:
+                return await self._execute_seed(started_at)
+
             # Buscar órdenes confirmadas
-            domain: list = [["state", "in", ["sale", "done"]]]
-            if self._conn.last_sync_at:
-                domain.append(["write_date", ">", self._conn.last_sync_at])
+            domain: list = [
+                ["state", "in", ["sale", "done"]],
+                ["write_date", ">", self._conn.last_sync_at],
+            ]
 
             orders = await self._odoo.search_read(
                 "sale.order", domain, ORDER_FIELDS, order="write_date asc"
@@ -168,6 +175,9 @@ class PollWorker:
                     await self._conn_repo.update_last_sync(self._conn.id, last_write_date)
                     self._conn.last_sync_at = last_write_date
 
+                # Mantener máximo MAX_SENT_ORDERS por conexión
+                await self._sent_repo.trim_to_limit(self._conn.id, MAX_SENT_ORDERS)
+
             # Procesar retry queue
             await self._process_retries()
 
@@ -189,6 +199,47 @@ class PollWorker:
         return await self._log(
             started_at, orders_found, orders_sent, orders_failed, orders_skipped, error_message
         )
+
+    async def _execute_seed(self, started_at: str) -> SyncLog:
+        """Primera sincronización: registra las últimas N órdenes sin enviar webhooks."""
+        logger.info("Seed inicial para '%s': registrando últimas %d órdenes", self._conn.name, MAX_SENT_ORDERS)
+
+        domain: list = [["state", "in", ["sale", "done"]]]
+        orders = await self._odoo.search_read(
+            "sale.order", domain, ORDER_FIELDS,
+            limit=MAX_SENT_ORDERS, order="write_date desc",
+        )
+        orders_found = len(orders)
+
+        last_write_date: str | None = None
+        for order in orders:
+            await self._sent_repo.mark_sent(
+                SentOrder(
+                    connection_id=self._conn.id,
+                    odoo_order_id=order["id"],
+                    odoo_order_name=order.get("name", ""),
+                    odoo_write_date=order.get("write_date", ""),
+                    sent_at=_now_str(),
+                )
+            )
+            wd = order.get("write_date", "")
+            if wd and (not last_write_date or wd > last_write_date):
+                last_write_date = wd
+
+        if last_write_date:
+            await self._conn_repo.update_last_sync(self._conn.id, last_write_date)
+            self._conn.last_sync_at = last_write_date
+
+        self._cb.record_success()
+        await self._conn_repo.update_circuit_state(
+            self._conn.id, self._cb.state, self._cb.failure_count
+        )
+
+        logger.info(
+            "Seed completado para '%s': %d órdenes registradas (0 webhooks enviados)",
+            self._conn.name, orders_found,
+        )
+        return await self._log(started_at, orders_found, 0, 0, orders_found, None)
 
     async def _process_retries(self) -> None:
         pending = await self._retry_repo.get_pending(self._conn.id)
