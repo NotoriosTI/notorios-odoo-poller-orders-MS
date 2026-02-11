@@ -1,0 +1,10 @@
+2026-02-10 22:46:55,541 [INFO] src.poller.scheduler: Scheduler iniciado con 0 conexiones
+2026-02-10 22:52:50,610 [INFO] src.tui.app: Shutdown signal recibido
+2026-02-10 22:52:50,610 [INFO] src.poller.scheduler: Scheduler detenido
+2026-02-10 22:52:50,814 [INFO] src.tui.app: Shutdown signal recibido
+2026-02-10 22:52:50,814 [INFO] src.poller.scheduler: Scheduler detenido
+2026-02-10 22:53:32,106 [INFO] src.poller.scheduler: Scheduler iniciado con 0 conexiones
+2026-02-10 22:53:49,108 [INFO] src.tui.app: Shutdown signal recibido
+2026-02-10 22:53:49,109 [INFO] src.poller.scheduler: Scheduler detenido
+2026-02-10 22:53:49,279 [INFO] src.tui.app: Shutdown signal recibido
+2026-02-10 22:53:49,279 [INFO] src.poller.scheduler: Scheduler detenido

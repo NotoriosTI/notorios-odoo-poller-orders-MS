@@ -1,0 +1,10 @@
+services:
+  poller:
+    build: .
+    volumes:
+      - ./data:/app/data
+    environment:
+      - POLLER_DB_PATH=/app/data/poller.db
+      - POLLER_LOG_LEVEL=${POLLER_LOG_LEVEL:-INFO}
+      - POLLER_ENCRYPTION_KEY=${POLLER_ENCRYPTION_KEY}
+      - POLLER_DEFAULT_WEBHOOK_URL=${POLLER_DEFAULT_WEBHOOK_URL:-}
