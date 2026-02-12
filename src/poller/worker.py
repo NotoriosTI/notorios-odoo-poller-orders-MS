@@ -26,6 +26,7 @@ from src.poller.sender import WebhookSender, WebhookSendError
 logger = logging.getLogger(__name__)
 
 MAX_SENT_ORDERS = 30
+MAX_SYNC_LOGS = 100
 
 ORDER_FIELDS = [
     "name",
@@ -108,6 +109,8 @@ class PollWorker:
                 await self._conn_repo.update_circuit_state(
                     self._conn.id, self._cb.state, self._cb.failure_count
                 )
+                await self._sync_repo.trim_to_limit(self._conn.id, MAX_SYNC_LOGS)
+                await self._retry_repo.cleanup_finished(self._conn.id)
                 sync_log = await self._log(
                     started_at, orders_found, orders_sent, orders_failed, orders_skipped, None
                 )
@@ -182,6 +185,9 @@ class PollWorker:
             await self._process_retries()
 
             self._cb.record_success()
+
+            await self._sync_repo.trim_to_limit(self._conn.id, MAX_SYNC_LOGS)
+            await self._retry_repo.cleanup_finished(self._conn.id)
 
         except OdooRateLimitError as e:
             logger.warning("Rate limit en '%s': %s", self._conn.name, e)

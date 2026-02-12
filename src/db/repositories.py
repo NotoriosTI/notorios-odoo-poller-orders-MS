@@ -200,6 +200,16 @@ class SyncLogRepository:
             for r in rows
         ]
 
+    async def trim_to_limit(self, connection_id: int, limit: int = 100) -> None:
+        await self._db.execute(
+            """DELETE FROM sync_logs WHERE connection_id = ? AND id NOT IN (
+                   SELECT id FROM sync_logs WHERE connection_id = ?
+                   ORDER BY id DESC LIMIT ?
+               )""",
+            (connection_id, connection_id, limit),
+        )
+        await self._db.commit()
+
 
 class RetryQueueRepository:
     def __init__(self, db: aiosqlite.Connection) -> None:
@@ -286,6 +296,13 @@ class RetryQueueRepository:
         )
         rows = await cursor.fetchall()
         return {r["status"]: r["cnt"] for r in rows}
+
+    async def cleanup_finished(self, connection_id: int) -> None:
+        await self._db.execute(
+            "DELETE FROM retry_queue WHERE connection_id = ? AND status IN ('sent', 'discarded')",
+            (connection_id,),
+        )
+        await self._db.commit()
 
     def _row_to_model(self, row: aiosqlite.Row) -> RetryItem:
         return RetryItem(
