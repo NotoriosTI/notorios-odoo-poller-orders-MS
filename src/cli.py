@@ -40,7 +40,17 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("run", help="Iniciar el polling de todas las conexiones habilitadas")
 
     # add
-    sub.add_parser("add", help="Agregar una nueva conexión Odoo (interactivo)")
+    p = sub.add_parser("add", help="Agregar una nueva conexión Odoo (interactivo o con flags)")
+    p.add_argument("--name", help="Nombre de la conexión")
+    p.add_argument("--connection-id", dest="external_id", help="External ID (StockMaster)")
+    p.add_argument("--url", dest="odoo_url", help="URL Odoo")
+    p.add_argument("--database", dest="odoo_db", help="Base de datos Odoo")
+    p.add_argument("--username", dest="odoo_username", help="Usuario Odoo")
+    p.add_argument("--api-key", dest="odoo_api_key", help="API Key Odoo")
+    p.add_argument("--webhook-url", help="Webhook URL")
+    p.add_argument("--webhook-secret", help="Webhook Secret")
+    p.add_argument("--interval", type=int, default=60, help="Intervalo de polling en segundos (default: 60)")
+    p.add_argument("--disabled", action="store_true", help="Crear la conexión deshabilitada")
 
     # list
     sub.add_parser("list", help="Listar todas las conexiones")
@@ -217,21 +227,40 @@ async def cmd_run(ctx: AppContext) -> None:
     print("Detenido.")
 
 
-async def cmd_add(ctx: AppContext) -> None:
-    print("=== Nueva Conexión Odoo ===\n")
+async def cmd_add(ctx: AppContext, args: argparse.Namespace | None = None) -> None:
+    non_interactive = args is not None and any([
+        args.odoo_url, args.odoo_db, args.odoo_username, args.odoo_api_key,
+    ])
 
-    conn = Connection(
-        name=_prompt("Nombre"),
-        external_id=_prompt("External ID (generado por StockMaster)"),
-        odoo_url=_prompt("URL Odoo (ej: https://miempresa.odoo.com)"),
-        odoo_db=_prompt("Base de datos Odoo"),
-        odoo_username=_prompt("Usuario Odoo"),
-        odoo_api_key=_prompt("API Key", password=True),
-        webhook_url=_prompt("Webhook URL", default=ctx.settings.default_webhook_url),
-        webhook_secret=_prompt("Webhook Secret (opcional)", password=True),
-        poll_interval_seconds=int(_prompt("Intervalo de polling (segundos)", default="60")),
-        enabled=_prompt("Habilitada (s/n)", default="s").lower() in ("s", "si", "y", "yes"),
-    )
+    if non_interactive:
+        assert args is not None
+        name = args.name or args.external_id or args.odoo_db or ""
+        conn = Connection(
+            name=name,
+            external_id=args.external_id or "",
+            odoo_url=args.odoo_url or "",
+            odoo_db=args.odoo_db or "",
+            odoo_username=args.odoo_username or "",
+            odoo_api_key=args.odoo_api_key or "",
+            webhook_url=args.webhook_url or ctx.settings.default_webhook_url,
+            webhook_secret=args.webhook_secret or "",
+            poll_interval_seconds=args.interval,
+            enabled=not args.disabled,
+        )
+    else:
+        print("=== Nueva Conexión Odoo ===\n")
+        conn = Connection(
+            name=_prompt("Nombre"),
+            external_id=_prompt("External ID (generado por StockMaster)"),
+            odoo_url=_prompt("URL Odoo (ej: https://miempresa.odoo.com)"),
+            odoo_db=_prompt("Base de datos Odoo"),
+            odoo_username=_prompt("Usuario Odoo"),
+            odoo_api_key=_prompt("API Key", password=True),
+            webhook_url=_prompt("Webhook URL", default=ctx.settings.default_webhook_url),
+            webhook_secret=_prompt("Webhook Secret (opcional)", password=True),
+            poll_interval_seconds=int(_prompt("Intervalo de polling (segundos)", default="60")),
+            enabled=_prompt("Habilitada (s/n)", default="s").lower() in ("s", "si", "y", "yes"),
+        )
 
     if not conn.name or not conn.odoo_url or not conn.odoo_db:
         print("Error: Nombre, URL y DB son requeridos.")
@@ -537,7 +566,7 @@ async def run_cli(args: argparse.Namespace) -> None:
             case "run":
                 await cmd_run(ctx)
             case "add":
-                await cmd_add(ctx)
+                await cmd_add(ctx, args)
             case "list":
                 await cmd_list(ctx)
             case "edit":
