@@ -1,0 +1,78 @@
+environments:
+  local:
+    origin: local
+    dotenv_path: .env
+    default: true
+    encrypted_dotenv:
+      enabled: true
+  gcp:
+    origin: gcp
+    gcp_project_id: notorios
+  test:
+    origin: local
+    dotenv_path: .env.test
+
+variables:
+  POLLER_ENCRYPTION_KEY:
+    source: POLLER_ENCRYPTION_KEY
+    type: str
+    required: true
+  POLLER_DB_PATH:
+    source: POLLER_DB_PATH
+    type: str
+    required: false
+    default: data/poller.db
+  POLLER_LOG_LEVEL:
+    source: POLLER_LOG_LEVEL
+    type: str
+    required: false
+    default: INFO
+  POLLER_DEFAULT_WEBHOOK_URL:
+    source: POLLER_DEFAULT_WEBHOOK_URL
+    type: str
+    required: false
+    default: ""
+  GCP_PROJECT:
+    source: GCP_PROJECT
+    type: str
+    required: false
+  GCP_REGION:
+    source: GCP_REGION
+    type: str
+    required: false
+  ARTIFACT_REGISTRY_REPO:
+    source: ARTIFACT_REGISTRY_REPO
+    type: str
+    required: false
+  VM_HOST:
+    source: VM_HOST
+    type: str
+    required: false
+  VM_USER:
+    source: VM_USER
+    type: str
+    required: false
+  VM_DEPLOY_PATH:
+    source: VM_DEPLOY_PATH
+    type: str
+    required: false
+  SSH_KEY:
+    source: SSH_KEY
+    type: str
+    required: false
+
+validation:
+  strict: false
+  required:
+    - POLLER_ENCRYPTION_KEY
+  optional:
+    - POLLER_DB_PATH
+    - POLLER_LOG_LEVEL
+    - POLLER_DEFAULT_WEBHOOK_URL
+    - GCP_PROJECT
+    - GCP_REGION
+    - ARTIFACT_REGISTRY_REPO
+    - VM_HOST
+    - VM_USER
+    - VM_DEPLOY_PATH
+    - SSH_KEY

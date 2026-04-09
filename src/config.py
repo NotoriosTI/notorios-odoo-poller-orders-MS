@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
+from env_manager import get_config, require_config
 
 
 @dataclass(frozen=True)
@@ -15,9 +14,7 @@ class Settings:
 
     @classmethod
     def load(cls) -> Settings:
-        load_dotenv()
-
-        encryption_key = os.environ.get("POLLER_ENCRYPTION_KEY", "")
+        encryption_key = require_config("POLLER_ENCRYPTION_KEY")
         if not encryption_key:
             raise RuntimeError(
                 "POLLER_ENCRYPTION_KEY es requerida. "
@@ -25,8 +22,8 @@ class Settings:
             )
 
         return cls(
-            db_path=os.environ.get("POLLER_DB_PATH", "data/poller.db"),
-            log_level=os.environ.get("POLLER_LOG_LEVEL", "INFO"),
+            db_path=get_config("POLLER_DB_PATH") or "data/poller.db",
+            log_level=get_config("POLLER_LOG_LEVEL") or "INFO",
             encryption_key=encryption_key,
-            default_webhook_url=os.environ.get("POLLER_DEFAULT_WEBHOOK_URL", ""),
+            default_webhook_url=get_config("POLLER_DEFAULT_WEBHOOK_URL") or "",
         )

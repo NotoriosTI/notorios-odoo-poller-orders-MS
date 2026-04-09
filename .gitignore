@@ -12,3 +12,5 @@ venv/
 data/*.db
 .mypy_cache/
 .pytest_cache/
+.env.keys
+.env.test

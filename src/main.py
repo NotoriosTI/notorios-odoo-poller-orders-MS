@@ -26,10 +26,8 @@ def main() -> None:
     # Logging setup temprano para 'run', lazy para el resto
     level = "INFO"
     if args.command == "run":
-        import os
-        from dotenv import load_dotenv
-        load_dotenv()
-        level = os.environ.get("POLLER_LOG_LEVEL", "INFO")
+        from env_manager import get_config
+        level = get_config("POLLER_LOG_LEVEL") or "INFO"
 
     setup_logging(level)
     asyncio.run(run_cli(args))
