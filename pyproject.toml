@@ -16,6 +16,9 @@ dev = [
     "pytest-asyncio>=0.24.0",
 ]
 
+[tool.poetry]
+packages = [{include = "src"}]
+
 [project.scripts]
 odoo-poller = "src.main:main"
 
