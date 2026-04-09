@@ -11,5 +11,6 @@ venv/
 data/*.db
 .mypy_cache/
 .pytest_cache/
+poetry.lock
 .env.keys
 .env.test
