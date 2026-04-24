@@ -74,4 +74,6 @@ class SentOrder:
     odoo_order_id: int = 0
     odoo_order_name: str = ""
     odoo_write_date: str = ""
+    last_state: str = "sale"
+    odoo_create_date: str = ""
     sent_at: str = ""
