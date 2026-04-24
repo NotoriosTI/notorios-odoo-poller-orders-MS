@@ -83,16 +83,27 @@ async def test_update_circuit_state(db_and_repos):
 
 @pytest.mark.asyncio
 async def test_sent_order_idempotency(db_and_repos):
+    """UPSERT semantics: same order_id upserts in place; is_sent checks write_date."""
     _, conn_repo, _, sent_repo, _, _ = db_and_repos
 
     conn = await conn_repo.create(Connection(name="Y", odoo_url="u", odoo_db="d", odoo_username="u", odoo_api_key="k", webhook_url="w"))
 
     from src.db.models import SentOrder
-    order = SentOrder(connection_id=conn.id, odoo_order_id=42, odoo_order_name="SO042", odoo_write_date="2024-01-01 00:00:00")
-    await sent_repo.mark_sent(order)
+    order_v1 = SentOrder(connection_id=conn.id, odoo_order_id=42, odoo_order_name="SO042", odoo_write_date="2024-01-01 00:00:00")
+    await sent_repo.mark_sent(order_v1)
 
+    # First write_date is current
     assert await sent_repo.is_sent(conn.id, 42, "2024-01-01 00:00:00")
-    assert not await sent_repo.is_sent(conn.id, 42, "2024-01-02 00:00:00")
+
+    # Upsert with a newer write_date
+    order_v2 = SentOrder(connection_id=conn.id, odoo_order_id=42, odoo_order_name="SO042", odoo_write_date="2024-01-02 00:00:00")
+    await sent_repo.mark_sent(order_v2)
+
+    # Old write_date no longer matches (row was updated)
+    assert not await sent_repo.is_sent(conn.id, 42, "2024-01-01 00:00:00")
+    # New write_date matches
+    assert await sent_repo.is_sent(conn.id, 42, "2024-01-02 00:00:00")
+    # Different order_id never sent
     assert not await sent_repo.is_sent(conn.id, 99, "2024-01-01 00:00:00")
 
 

@@ -325,20 +325,53 @@ class SentOrderRepository:
     def __init__(self, db: aiosqlite.Connection) -> None:
         self._db = db
 
+    def _row_to_model(self, r: aiosqlite.Row) -> SentOrder:
+        return SentOrder(
+            id=r["id"],
+            connection_id=r["connection_id"],
+            odoo_order_id=r["odoo_order_id"],
+            odoo_order_name=r["odoo_order_name"],
+            odoo_write_date=r["odoo_write_date"],
+            last_state=r["last_state"],
+            odoo_create_date=r["odoo_create_date"],
+            sent_at=r["sent_at"],
+        )
+
     async def mark_sent(self, order: SentOrder) -> None:
         await self._db.execute(
-            """INSERT OR IGNORE INTO sent_orders
-               (connection_id, odoo_order_id, odoo_order_name, odoo_write_date, sent_at)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO sent_orders
+               (connection_id, odoo_order_id, odoo_order_name, odoo_write_date, last_state, odoo_create_date, sent_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(connection_id, odoo_order_id) DO UPDATE SET
+                 odoo_order_name=excluded.odoo_order_name,
+                 odoo_write_date=excluded.odoo_write_date,
+                 last_state=excluded.last_state,
+                 odoo_create_date=excluded.odoo_create_date,
+                 sent_at=excluded.sent_at""",
             (
                 order.connection_id,
                 order.odoo_order_id,
                 order.odoo_order_name,
                 order.odoo_write_date,
+                order.last_state,
+                order.odoo_create_date,
                 order.sent_at or _now(),
             ),
         )
         await self._db.commit()
+
+    async def get_latest(
+        self, connection_id: int, odoo_order_id: int
+    ) -> SentOrder | None:
+        cursor = await self._db.execute(
+            """SELECT * FROM sent_orders
+               WHERE connection_id = ? AND odoo_order_id = ?""",
+            (connection_id, odoo_order_id),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return self._row_to_model(row)
 
     async def is_sent(
         self, connection_id: int, odoo_order_id: int, write_date: str
@@ -368,24 +401,4 @@ class SentOrderRepository:
             (connection_id, limit),
         )
         rows = await cursor.fetchall()
-        return [
-            SentOrder(
-                id=r["id"],
-                connection_id=r["connection_id"],
-                odoo_order_id=r["odoo_order_id"],
-                odoo_order_name=r["odoo_order_name"],
-                odoo_write_date=r["odoo_write_date"],
-                sent_at=r["sent_at"],
-            )
-            for r in rows
-        ]
-
-    async def trim_to_limit(self, connection_id: int, limit: int = 30) -> None:
-        await self._db.execute(
-            """DELETE FROM sent_orders WHERE connection_id = ? AND id NOT IN (
-                   SELECT id FROM sent_orders WHERE connection_id = ?
-                   ORDER BY sent_at DESC LIMIT ?
-               )""",
-            (connection_id, connection_id, limit),
-        )
-        await self._db.commit()
+        return [self._row_to_model(r) for r in rows]
