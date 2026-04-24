@@ -144,3 +144,72 @@ def test_shipping_falls_back_to_customer():
     payload = map_order_to_webhook_payload(order, batch, "testdb", 1)
 
     assert payload["shipping_address"]["name"] == "Cliente Test"
+
+
+def test_map_order_includes_event_type():
+    """event_type param is included at root level of payload."""
+    order = {
+        "id": 10, "name": "SO001", "state": "cancel",
+        "date_order": "", "write_date": "",
+        "create_date": "2024-01-01 08:00:00",
+        "origin": False,
+        "partner_id": False, "partner_shipping_id": False,
+        "amount_untaxed": 0, "amount_tax": 0, "amount_total": 0,
+        "currency_id": False, "note": "",
+    }
+    batch = _make_batch()
+    payload = map_order_to_webhook_payload(order, batch, "testdb", 1, event_type="cancelled")
+
+    assert payload["event_type"] == "cancelled"
+
+
+def test_map_order_default_event_type_confirmed():
+    """When event_type is not provided, defaults to 'confirmed'."""
+    order = {
+        "id": 10, "name": "SO001", "state": "sale",
+        "date_order": "", "write_date": "",
+        "create_date": "",
+        "origin": False,
+        "partner_id": False, "partner_shipping_id": False,
+        "amount_untaxed": 0, "amount_tax": 0, "amount_total": 0,
+        "currency_id": False, "note": "",
+    }
+    batch = _make_batch()
+    payload = map_order_to_webhook_payload(order, batch, "testdb", 1)
+
+    assert payload["event_type"] == "confirmed"
+
+
+def test_map_order_includes_create_date():
+    """order.create_date is included in the order section of the payload."""
+    order = {
+        "id": 10, "name": "SO001", "state": "sale",
+        "date_order": "", "write_date": "",
+        "create_date": "2024-01-01 08:00:00",
+        "origin": False,
+        "partner_id": False, "partner_shipping_id": False,
+        "amount_untaxed": 0, "amount_tax": 0, "amount_total": 0,
+        "currency_id": False, "note": "",
+    }
+    batch = _make_batch()
+    payload = map_order_to_webhook_payload(order, batch, "testdb", 1)
+
+    assert payload["order"]["create_date"] == "2024-01-01 08:00:00"
+
+
+def test_map_refunded_includes_original_order_name():
+    """When event_type=refunded, original_order_name from origin is added at root."""
+    order = {
+        "id": 10, "name": "REF-SO001", "state": "sale",
+        "date_order": "", "write_date": "",
+        "create_date": "",
+        "origin": "SO001",
+        "partner_id": False, "partner_shipping_id": False,
+        "amount_untaxed": 0, "amount_tax": 0, "amount_total": 0,
+        "currency_id": False, "note": "",
+    }
+    batch = _make_batch()
+    payload = map_order_to_webhook_payload(order, batch, "testdb", 1, event_type="refunded")
+
+    assert payload["event_type"] == "refunded"
+    assert payload["original_order_name"] == "SO001"

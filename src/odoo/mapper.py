@@ -155,6 +155,7 @@ def map_order_to_webhook_payload(
     batch: BatchOdooData,
     odoo_db: str,
     connection_id: str,
+    event_type: str = "confirmed",
 ) -> dict[str, Any]:
     partner_id = _extract_id(order.get("partner_id"))
     shipping_id = _extract_id(order.get("partner_shipping_id"))
@@ -192,8 +193,9 @@ def map_order_to_webhook_payload(
             }
         )
 
-    return {
+    payload: dict[str, Any] = {
         "source": "odoo",
+        "event_type": event_type,
         "connection_id": connection_id,
         "odoo_db": odoo_db,
         "order": {
@@ -202,6 +204,7 @@ def map_order_to_webhook_payload(
             "state": order.get("state", ""),
             "date_order": order.get("date_order", ""),
             "write_date": order.get("write_date", ""),
+            "create_date": order.get("create_date") or "",
             "amount_untaxed": order.get("amount_untaxed", 0),
             "amount_tax": order.get("amount_tax", 0),
             "amount_total": order.get("amount_total", 0),
@@ -212,6 +215,11 @@ def map_order_to_webhook_payload(
         "shipping_address": shipping if shipping else customer,
         "items": items,
     }
+
+    if event_type == "refunded":
+        payload["original_order_name"] = order.get("origin") or ""
+
+    return payload
 
 
 def _extract_name(val: Any) -> str:
