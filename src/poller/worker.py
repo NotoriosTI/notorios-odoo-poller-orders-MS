@@ -21,6 +21,7 @@ from src.db.repositories import (
 from src.odoo.client import OdooClient, OdooRateLimitError
 from src.odoo.mapper import fetch_batch_data, map_order_to_webhook_payload
 from src.poller.circuit_breaker import CircuitBreaker
+from src.poller.classifier import classify_event
 from src.poller.sender import WebhookSender, WebhookSendError
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ ORDER_FIELDS = [
     "state",
     "date_order",
     "write_date",
+    "create_date",
+    "origin",
     "partner_id",
     "partner_shipping_id",
     "amount_untaxed",
@@ -93,9 +96,9 @@ class PollWorker:
             if not self._conn.last_sync_at:
                 return await self._execute_seed(started_at)
 
-            # Buscar órdenes confirmadas
+            # Buscar órdenes confirmadas y canceladas
             domain: list = [
-                ["state", "in", ["sale", "done"]],
+                ["state", "in", ["sale", "done", "cancel"]],
                 ["write_date", ">", self._conn.last_sync_at],
             ]
 
@@ -116,21 +119,28 @@ class PollWorker:
                 )
                 return sync_log
 
-            # Filtrar ya enviadas (idempotencia)
-            sent_set = await self._sent_repo.get_sent_ids(self._conn.id)
-            new_orders = [
-                o for o in orders
-                if (o["id"], o.get("write_date", "")) not in sent_set
-            ]
-            orders_skipped = orders_found - len(new_orders)
+            # Clasificar órdenes: skip duplicados, emitir eventos correctos
+            actionable_orders = []
+            event_types = {}
+            for order in orders:
+                stored = await self._sent_repo.get_latest(self._conn.id, order["id"])
+                event_type = classify_event(order, stored)
+                if event_type == "skip":
+                    orders_skipped += 1
+                    continue
+                actionable_orders.append(order)
+                event_types[order["id"]] = event_type
+            orders_found_non_skip = len(actionable_orders)
 
-            if new_orders:
-                batch = await fetch_batch_data(self._odoo, new_orders)
+            if actionable_orders:
+                batch = await fetch_batch_data(self._odoo, actionable_orders)
 
                 last_write_date = self._conn.last_sync_at
-                for order in new_orders:
+                for order in actionable_orders:
+                    event_type = event_types[order["id"]]
                     payload = map_order_to_webhook_payload(
-                        order, batch, self._conn.odoo_db, self._conn.external_id
+                        order, batch, self._conn.odoo_db, self._conn.external_id,
+                        event_type=event_type,
                     )
                     try:
                         await self._sender.send(
@@ -145,6 +155,8 @@ class PollWorker:
                                 odoo_order_id=order["id"],
                                 odoo_order_name=order.get("name", ""),
                                 odoo_write_date=order.get("write_date", ""),
+                                last_state=order.get("state", "sale"),
+                                odoo_create_date=order.get("create_date") or "",
                                 sent_at=_now_str(),
                             )
                         )
@@ -178,9 +190,6 @@ class PollWorker:
                     await self._conn_repo.update_last_sync(self._conn.id, last_write_date)
                     self._conn.last_sync_at = last_write_date
 
-                # Mantener máximo MAX_SENT_ORDERS por conexión
-                await self._sent_repo.trim_to_limit(self._conn.id, MAX_SENT_ORDERS)
-
             # Procesar retry queue
             await self._process_retries()
 
@@ -210,7 +219,7 @@ class PollWorker:
         """Primera sincronización: registra las últimas N órdenes sin enviar webhooks."""
         logger.info("Seed inicial para '%s': registrando últimas %d órdenes", self._conn.name, MAX_SENT_ORDERS)
 
-        domain: list = [["state", "in", ["sale", "done"]]]
+        domain: list = [["state", "in", ["sale", "done", "cancel"]]]
         orders = await self._odoo.search_read(
             "sale.order", domain, ORDER_FIELDS,
             limit=MAX_SENT_ORDERS, order="write_date desc",
@@ -225,6 +234,8 @@ class PollWorker:
                     odoo_order_id=order["id"],
                     odoo_order_name=order.get("name", ""),
                     odoo_write_date=order.get("write_date", ""),
+                    last_state=order.get("state", "sale"),
+                    odoo_create_date=order.get("create_date") or "",
                     sent_at=_now_str(),
                 )
             )
@@ -271,6 +282,8 @@ class PollWorker:
                         odoo_order_id=item.odoo_order_id,
                         odoo_order_name=item.odoo_order_name,
                         odoo_write_date=payload.get("order", {}).get("write_date", ""),
+                        last_state=payload.get("order", {}).get("state", "sale"),
+                        odoo_create_date=payload.get("order", {}).get("create_date", ""),
                         sent_at=_now_str(),
                     )
                 )
