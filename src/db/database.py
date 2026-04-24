@@ -58,13 +58,15 @@ CREATE TABLE IF NOT EXISTS sent_orders (
     odoo_order_id INTEGER NOT NULL,
     odoo_order_name TEXT NOT NULL DEFAULT '',
     odoo_write_date TEXT NOT NULL,
+    last_state TEXT NOT NULL DEFAULT 'sale',
+    odoo_create_date TEXT NOT NULL DEFAULT '',
     sent_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_logs_connection ON sync_logs(connection_id);
 CREATE INDEX IF NOT EXISTS idx_retry_queue_connection_status ON retry_queue(connection_id, status);
 CREATE INDEX IF NOT EXISTS idx_retry_queue_next_retry ON retry_queue(next_retry_at) WHERE status = 'pending';
-CREATE UNIQUE INDEX IF NOT EXISTS idx_sent_orders_unique ON sent_orders(connection_id, odoo_order_id, odoo_write_date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sent_orders_order_unique ON sent_orders(connection_id, odoo_order_id);
 CREATE INDEX IF NOT EXISTS idx_sent_orders_connection ON sent_orders(connection_id);
 """
 
@@ -84,6 +86,27 @@ async def _migrate(db: aiosqlite.Connection) -> None:
     columns = {row[1] for row in await cursor.fetchall()}
     if "external_id" not in columns:
         await db.execute("ALTER TABLE connections ADD COLUMN external_id TEXT NOT NULL DEFAULT ''")
+        await db.commit()
+
+    cursor = await db.execute("PRAGMA table_info(sent_orders)")
+    so_columns = {row[1] for row in await cursor.fetchall()}
+    if "last_state" not in so_columns:
+        await db.execute("ALTER TABLE sent_orders ADD COLUMN last_state TEXT NOT NULL DEFAULT 'sale'")
+        await db.commit()
+    if "odoo_create_date" not in so_columns:
+        await db.execute("ALTER TABLE sent_orders ADD COLUMN odoo_create_date TEXT NOT NULL DEFAULT ''")
+        await db.commit()
+
+    # Replace old triple-column unique index with per-order unique index
+    cursor = await db.execute("PRAGMA index_list(sent_orders)")
+    index_names = {row[1] for row in await cursor.fetchall()}
+    if "idx_sent_orders_unique" in index_names:
+        await db.execute("DROP INDEX IF EXISTS idx_sent_orders_unique")
+        await db.commit()
+    if "idx_sent_orders_order_unique" not in index_names:
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_sent_orders_order_unique ON sent_orders(connection_id, odoo_order_id)"
+        )
         await db.commit()
 
 

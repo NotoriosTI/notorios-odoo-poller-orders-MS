@@ -121,6 +121,45 @@ async def test_sync_log_trim_to_limit(db_and_repos):
 
 
 @pytest.mark.asyncio
+async def test_migration_adds_last_state_column():
+    """Migration adds last_state and odoo_create_date columns to sent_orders."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test_migrate.db")
+        db = await init_db(db_path)
+        cursor = await db.execute("PRAGMA table_info(sent_orders)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        await db.close()
+
+    assert "last_state" in columns, f"last_state missing from columns: {columns}"
+    assert "odoo_create_date" in columns, f"odoo_create_date missing from columns: {columns}"
+
+
+@pytest.mark.asyncio
+async def test_migration_replaces_unique_index():
+    """Old index idx_sent_orders_unique is dropped, new idx_sent_orders_order_unique exists."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test_idx.db")
+        db = await init_db(db_path)
+        cursor = await db.execute("PRAGMA index_list(sent_orders)")
+        index_names = {row[1] for row in await cursor.fetchall()}
+        await db.close()
+
+    assert "idx_sent_orders_order_unique" in index_names, f"New index missing: {index_names}"
+    assert "idx_sent_orders_unique" not in index_names, f"Old index still present: {index_names}"
+
+
+@pytest.mark.asyncio
+async def test_migration_idempotent():
+    """Running init_db twice does not raise."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test_idem.db")
+        db = await init_db(db_path)
+        await db.close()
+        db2 = await init_db(db_path)
+        await db2.close()
+
+
+@pytest.mark.asyncio
 async def test_retry_queue_cleanup_finished(db_and_repos):
     _, conn_repo, _, _, _, retry_repo = db_and_repos
 
