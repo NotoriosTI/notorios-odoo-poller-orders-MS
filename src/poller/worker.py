@@ -144,13 +144,21 @@ class PollWorker:
                 last_write_date = self._conn.last_sync_at
                 for order in actionable_orders:
                     event_type = event_types[order["id"]]
+
+                    # Resolve original_order_id for refunded events before mapping
+                    original_order_id: int | None = None
+                    if event_type == "refunded":
+                        original_order_id = await self._resolve_original_order_id(order)
+
                     payload = map_order_to_webhook_payload(
                         order, batch, self._conn.odoo_db, self._conn.external_id,
                         event_type=event_type,
+                        original_order_id=original_order_id,
                     )
                     new_hash = compute_relevant_hash(payload)
 
                     # Re-apply noise filter for 'updated' events now that we have the full payload
+                    # REF-* orders (refunded) bypass this path — they have no hash noise filter
                     if event_type == "updated":
                         stored = await self._sent_repo.get_latest(self._conn.id, order["id"])
                         event_type = classify_event(order, stored, new_hash=new_hash)
@@ -279,6 +287,52 @@ class PollWorker:
             self._conn.name, orders_found,
         )
         return await self._log(started_at, orders_found, 0, 0, orders_found, None)
+
+    async def _resolve_original_order_id(self, ref_order: dict) -> int | None:
+        """Resolve the numeric Odoo id of the original order for a REF-* counter-order.
+
+        Uses the ``origin`` field of the counter-order (which stores the ``name`` of
+        the original order, e.g. "SO100") to look up the original order in Odoo.
+
+        Returns the integer id if found, or ``None`` with a warning when the original
+        order no longer exists in Odoo (e.g. was deleted or renamed after refund).
+        """
+        origin_name: str = ref_order.get("origin") or ""
+        if not origin_name:
+            logger.warning(
+                "Orden contraria '%s' (id=%s) no tiene campo 'origin'. "
+                "original_order_id será None.",
+                ref_order.get("name"),
+                ref_order.get("id"),
+            )
+            return None
+
+        try:
+            results = await self._odoo.search_read(
+                "sale.order",
+                [["name", "=", origin_name]],
+                ["id", "name"],
+                limit=1,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Error al resolver original_order_id para '%s' (origin='%s'): %s",
+                ref_order.get("name"),
+                origin_name,
+                exc,
+            )
+            return None
+
+        if not results:
+            logger.warning(
+                "Orden original '%s' no encontrada en Odoo para la orden contraria '%s'. "
+                "original_order_id será None.",
+                origin_name,
+                ref_order.get("name"),
+            )
+            return None
+
+        return results[0]["id"]
 
     async def _process_retries(self) -> None:
         pending = await self._retry_repo.get_pending(self._conn.id)

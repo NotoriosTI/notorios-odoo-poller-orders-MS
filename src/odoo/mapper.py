@@ -156,6 +156,7 @@ def map_order_to_webhook_payload(
     odoo_db: str,
     connection_id: str,
     event_type: str = "confirmed",
+    original_order_id: int | None = None,
 ) -> dict[str, Any]:
     partner_id = _extract_id(order.get("partner_id"))
     shipping_id = _extract_id(order.get("partner_shipping_id"))
@@ -218,6 +219,8 @@ def map_order_to_webhook_payload(
 
     if event_type == "refunded":
         payload["original_order_name"] = order.get("origin") or ""
+        payload["original_order_id"] = original_order_id
+        payload["refund_mirror_odoo_id"] = order["id"]
 
     return payload
 

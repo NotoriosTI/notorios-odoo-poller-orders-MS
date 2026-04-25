@@ -32,6 +32,10 @@ def classify_event(order: dict, stored: SentOrder | None, *, new_hash: str = "")
     if stored.odoo_write_date == write_date:
         return "skip"
 
+    # REF-* orders are always refunds — skip the updated/hash path entirely
+    if name.startswith("REF-"):
+        return "refunded"
+
     if state == "cancel" and stored.last_state != "cancel":
         return "cancelled"
 
