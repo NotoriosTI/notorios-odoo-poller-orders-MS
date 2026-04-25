@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS sent_orders (
     odoo_write_date TEXT NOT NULL,
     last_state TEXT NOT NULL DEFAULT 'sale',
     odoo_create_date TEXT NOT NULL DEFAULT '',
+    hash_payload TEXT NOT NULL DEFAULT '',
     sent_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -95,6 +96,9 @@ async def _migrate(db: aiosqlite.Connection) -> None:
         await db.commit()
     if "odoo_create_date" not in so_columns:
         await db.execute("ALTER TABLE sent_orders ADD COLUMN odoo_create_date TEXT NOT NULL DEFAULT ''")
+        await db.commit()
+    if "hash_payload" not in so_columns:
+        await db.execute("ALTER TABLE sent_orders ADD COLUMN hash_payload TEXT NOT NULL DEFAULT ''")
         await db.commit()
 
     # Replace old triple-column unique index with per-order unique index

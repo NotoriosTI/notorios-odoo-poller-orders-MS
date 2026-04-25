@@ -171,6 +171,19 @@ async def test_migration_idempotent():
 
 
 @pytest.mark.asyncio
+async def test_migrate_adds_hash_payload_column():
+    """After init_db, PRAGMA shows hash_payload column on sent_orders."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "test_hash_col.db")
+        db = await init_db(db_path)
+        cursor = await db.execute("PRAGMA table_info(sent_orders)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        await db.close()
+
+    assert "hash_payload" in columns, f"hash_payload missing from columns: {columns}"
+
+
+@pytest.mark.asyncio
 async def test_retry_queue_cleanup_finished(db_and_repos):
     _, conn_repo, _, _, _, retry_repo = db_and_repos
 

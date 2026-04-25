@@ -334,19 +334,21 @@ class SentOrderRepository:
             odoo_write_date=r["odoo_write_date"],
             last_state=r["last_state"],
             odoo_create_date=r["odoo_create_date"],
+            hash_payload=r["hash_payload"] or "",
             sent_at=r["sent_at"],
         )
 
     async def mark_sent(self, order: SentOrder) -> None:
         await self._db.execute(
             """INSERT INTO sent_orders
-               (connection_id, odoo_order_id, odoo_order_name, odoo_write_date, last_state, odoo_create_date, sent_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+               (connection_id, odoo_order_id, odoo_order_name, odoo_write_date, last_state, odoo_create_date, hash_payload, sent_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(connection_id, odoo_order_id) DO UPDATE SET
                  odoo_order_name=excluded.odoo_order_name,
                  odoo_write_date=excluded.odoo_write_date,
                  last_state=excluded.last_state,
                  odoo_create_date=excluded.odoo_create_date,
+                 hash_payload=excluded.hash_payload,
                  sent_at=excluded.sent_at""",
             (
                 order.connection_id,
@@ -355,6 +357,7 @@ class SentOrderRepository:
                 order.odoo_write_date,
                 order.last_state,
                 order.odoo_create_date,
+                order.hash_payload,
                 order.sent_at or _now(),
             ),
         )
