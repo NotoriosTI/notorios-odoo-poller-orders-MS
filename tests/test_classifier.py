@@ -54,3 +54,34 @@ def test_classify_refunded_no_history():
     """New order with REF- prefix and no history -> refunded."""
     order = {"name": "REF-SO001", "state": "sale", "write_date": "2024-01-01 10:00:00"}
     assert classify_event(order, None) == "refunded"
+
+
+def test_classify_updated_hash_equal_is_skip():
+    """write_date changed but new_hash == stored.hash_payload -> skip (noise filter)."""
+    stored_hash = "a" * 64
+    stored = SentOrder(
+        connection_id=1,
+        odoo_order_id=10,
+        odoo_order_name="SO010",
+        odoo_write_date="2024-01-01 10:00:00",
+        last_state="sale",
+        odoo_create_date="2024-01-01 08:00:00",
+        hash_payload=stored_hash,
+    )
+    order = {"name": "SO010", "state": "sale", "write_date": "2024-01-02 12:00:00"}
+    assert classify_event(order, stored, new_hash=stored_hash) == "skip"
+
+
+def test_classify_updated_hash_changed():
+    """write_date changed AND new_hash != stored.hash_payload -> updated."""
+    stored = SentOrder(
+        connection_id=1,
+        odoo_order_id=10,
+        odoo_order_name="SO010",
+        odoo_write_date="2024-01-01 10:00:00",
+        last_state="sale",
+        odoo_create_date="2024-01-01 08:00:00",
+        hash_payload="a" * 64,
+    )
+    order = {"name": "SO010", "state": "sale", "write_date": "2024-01-02 12:00:00"}
+    assert classify_event(order, stored, new_hash="b" * 64) == "updated"

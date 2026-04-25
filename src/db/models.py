@@ -76,4 +76,5 @@ class SentOrder:
     odoo_write_date: str = ""
     last_state: str = "sale"
     odoo_create_date: str = ""
+    hash_payload: str = ""
     sent_at: str = ""
