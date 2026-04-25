@@ -186,3 +186,108 @@ async def test_worker_cancel_emits_cancelled_event(worker_setup):
 
     assert len(sent_payloads) == 1, "One webhook should be sent for the cancelled order"
     assert sent_payloads[0]["event_type"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_worker_stores_hash_payload_after_send(worker_setup):
+    """After a successful send, mark_sent is called with a non-empty hash_payload."""
+    worker, odoo_client, sender, sent_repo, conn, _ = worker_setup
+
+    odoo_client.search_read = AsyncMock(
+        return_value=[
+            {
+                "id": 300,
+                "name": "SO300",
+                "state": "sale",
+                "write_date": "2024-01-05 10:00:00",
+                "date_order": "2024-01-05 08:00:00",
+                "create_date": "2024-01-05 07:00:00",
+                "origin": False,
+                "partner_id": False,
+                "partner_shipping_id": False,
+                "amount_untaxed": 100,
+                "amount_tax": 19,
+                "amount_total": 119,
+                "currency_id": False,
+                "note": "",
+            }
+        ]
+    )
+
+    empty_batch = BatchOdooData(partners={}, products={}, variants={})
+    empty_batch._lines_by_order = {}
+
+    async def mock_send(url, payload, webhook_secret="", connection_external_id=""):
+        pass
+
+    with patch("src.poller.worker.fetch_batch_data", AsyncMock(return_value=empty_batch)):
+        sender.send = AsyncMock(side_effect=mock_send)
+        await worker.execute()
+
+    stored = await sent_repo.get_latest(conn.id, 300)
+    assert stored is not None, "Order should be stored after send"
+    assert stored.hash_payload != "", "hash_payload must be stored after a successful send"
+    assert len(stored.hash_payload) == 64, "hash_payload must be a sha256 hex string"
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_on_equal_hash(worker_setup):
+    """Pre-stored snapshot with a known hash — if compute_relevant_hash returns same hash, sender is NOT called."""
+    worker, odoo_client, sender, sent_repo, conn, _ = worker_setup
+
+    # Build a real hash using a known payload structure
+    from src.odoo.payload_hash import compute_relevant_hash
+
+    known_payload = {"items": [], "shipping_address": {}, "customer": {}}
+    known_hash = compute_relevant_hash(known_payload)
+
+    # Pre-store with that hash
+    await sent_repo.mark_sent(
+        SentOrder(
+            connection_id=conn.id,
+            odoo_order_id=400,
+            odoo_order_name="SO400",
+            odoo_write_date="2024-01-01 10:00:00",
+            last_state="sale",
+            odoo_create_date="2024-01-01 08:00:00",
+            hash_payload=known_hash,
+        )
+    )
+
+    # Odoo returns the same order with a different write_date (triggering 'updated' path)
+    odoo_client.search_read = AsyncMock(
+        return_value=[
+            {
+                "id": 400,
+                "name": "SO400",
+                "state": "sale",
+                "write_date": "2024-01-02 12:00:00",  # different write_date
+                "date_order": "2024-01-01 10:00:00",
+                "create_date": "2024-01-01 08:00:00",
+                "origin": False,
+                "partner_id": False,
+                "partner_shipping_id": False,
+                "amount_untaxed": 0,
+                "amount_tax": 0,
+                "amount_total": 0,
+                "currency_id": False,
+                "note": "",
+            }
+        ]
+    )
+
+    empty_batch = BatchOdooData(partners={}, products={}, variants={})
+    empty_batch._lines_by_order = {}
+
+    send_calls = []
+
+    async def mock_send(url, payload, webhook_secret="", connection_external_id=""):
+        send_calls.append(payload)
+
+    # Patch compute_relevant_hash to return the known hash (payload fields are identical)
+    with patch("src.poller.worker.fetch_batch_data", AsyncMock(return_value=empty_batch)):
+        with patch("src.poller.worker.compute_relevant_hash", return_value=known_hash):
+            sender.send = AsyncMock(side_effect=mock_send)
+            await worker.execute()
+
+    assert len(send_calls) == 0, "Sender must NOT be called when hash is identical (noise filtered)"

@@ -20,6 +20,7 @@ from src.db.repositories import (
 )
 from src.odoo.client import OdooClient, OdooRateLimitError
 from src.odoo.mapper import fetch_batch_data, map_order_to_webhook_payload
+from src.odoo.payload_hash import compute_relevant_hash
 from src.poller.circuit_breaker import CircuitBreaker
 from src.poller.classifier import classify_event
 from src.poller.sender import WebhookSender, WebhookSendError
@@ -122,8 +123,13 @@ class PollWorker:
             # Clasificar órdenes: skip duplicados, emitir eventos correctos
             actionable_orders = []
             event_types = {}
+            order_hashes: dict[int, str] = {}
             for order in orders:
                 stored = await self._sent_repo.get_latest(self._conn.id, order["id"])
+                # Pre-compute hash only for potential 'updated' events (stored exists, write_date changed)
+                # The full payload isn't available yet, but we compute a preliminary hash from the order
+                # fields. The real hash (from the mapped payload) is computed after batch fetch.
+                # For classification, we pass new_hash="" here and re-classify per-order after batch.
                 event_type = classify_event(order, stored)
                 if event_type == "skip":
                     orders_skipped += 1
@@ -142,6 +148,21 @@ class PollWorker:
                         order, batch, self._conn.odoo_db, self._conn.external_id,
                         event_type=event_type,
                     )
+                    new_hash = compute_relevant_hash(payload)
+
+                    # Re-apply noise filter for 'updated' events now that we have the full payload
+                    if event_type == "updated":
+                        stored = await self._sent_repo.get_latest(self._conn.id, order["id"])
+                        event_type = classify_event(order, stored, new_hash=new_hash)
+                        if event_type == "skip":
+                            orders_skipped += 1
+                            continue
+                        # Rebuild payload with correct (possibly unchanged) event_type
+                        payload = map_order_to_webhook_payload(
+                            order, batch, self._conn.odoo_db, self._conn.external_id,
+                            event_type=event_type,
+                        )
+
                     try:
                         await self._sender.send(
                             self._conn.webhook_url,
@@ -157,6 +178,7 @@ class PollWorker:
                                 odoo_write_date=order.get("write_date", ""),
                                 last_state=order.get("state", "sale"),
                                 odoo_create_date=order.get("create_date") or "",
+                                hash_payload=new_hash,
                                 sent_at=_now_str(),
                             )
                         )
