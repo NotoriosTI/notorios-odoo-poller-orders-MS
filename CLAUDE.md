@@ -78,6 +78,59 @@ CLI (cli.py) → AppContext → Repositories → SQLite (aiosqlite, WAL mode)
 - **Webhook headers**: `X-Webhook-Secret`, `X-Odoo-Connection-Id`
 - **pytest-asyncio**: `asyncio_mode = "auto"` en pyproject.toml
 
+## Operaciones en producción
+
+La DB de producción está en la VM de GCP. Se accede vía SSH + docker compose exec. Las variables de conexión SSH están en `.env` (`VM_HOST`, `VM_USER`, `SSH_KEY`, `VM_DEPLOY_PATH`).
+
+### Patrón para ejecutar queries
+
+```bash
+ssh -i $SSH_KEY $VM_USER@$VM_HOST "cd $VM_DEPLOY_PATH && docker compose exec -T poller python3 -c \"
+import asyncio
+from src.db.database import init_db
+from src.db.repositories import ConnectionRepository
+from src.encryption import FieldEncryptor
+from src.config import Settings
+
+async def main():
+    s = Settings.load()
+    db = await init_db(s.db_path)
+    repo = ConnectionRepository(db, FieldEncryptor(s.encryption_key))
+    # --- query aquí ---
+    await db.close()
+
+asyncio.run(main())
+\""
+```
+
+### Ejemplos comunes
+
+**Listar conexiones con secrets desencriptados:**
+```python
+for c in await repo.list_all():
+    print(f"#{c.id} ({c.name}): url={c.webhook_url} secret={c.webhook_secret} ext_id={c.external_id}")
+```
+
+**Actualizar webhook_url:**
+```python
+c = await repo.get(CONN_ID)
+c.webhook_url = "https://nueva-url.ejemplo.cl/api/webhooks/odoo"
+await repo.update(c)
+```
+
+**Actualizar webhook_secret:**
+```python
+c = await repo.get(CONN_ID)
+c.webhook_secret = "nuevo-secret"
+await repo.update(c)
+```
+
+### Notas
+
+- No requiere reinicio: `_poll_loop` re-lee la conexión desde DB cada ciclo (scheduler.py:122-126).
+- Los campos `odoo_api_key` y `webhook_secret` se encriptan/desencriptan automáticamente en el repository con Fernet.
+- Para queries de solo lectura a SQLite sin pasar por el repository: `sqlite3 data/poller.db "SELECT ..."` (pero los campos encriptados se verán en crudo).
+
 ## Variables de entorno
 
 | Variable | Requerida | Default |
